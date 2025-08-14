@@ -94,35 +94,53 @@ class Dataset(FrozenDict):
         
         data = {k: v[idxs] for k, v in self.items()}
 
-        rewards = np.zeros(data['rewards'].shape + (sequence_length,), dtype=float)
-        masks = np.ones(data['masks'].shape + (sequence_length,), dtype=float)
-        valid = np.ones(data['masks'].shape + (sequence_length,), dtype=float)
-        observations = np.zeros(data['observations'].shape[:-1] + (sequence_length, data['observations'].shape[-1]), dtype=float)
-        next_observations = np.zeros(data['observations'].shape[:-1] + (sequence_length, data['observations'].shape[-1]), dtype=float)
-        actions = np.zeros(data['actions'].shape[:-1] + (sequence_length, data['actions'].shape[-1]), dtype=float)
-        terminals = np.zeros(data['terminals'].shape + (sequence_length,), dtype=float)
+        # Pre-compute all required indices
+        all_idxs = idxs[:, None] + np.arange(sequence_length)[None, :]  # (batch_size, sequence_length)
+        all_idxs = all_idxs.flatten()
         
-        next_actions = np.zeros(data['actions'].shape[:-1] + (sequence_length, data['actions'].shape[-1]), dtype=float)
+        # Batch fetch data to avoid loops
+        batch_observations = self['observations'][all_idxs].reshape(batch_size, sequence_length, *self['observations'].shape[1:])
+        batch_next_observations = self['next_observations'][all_idxs].reshape(batch_size, sequence_length, *self['next_observations'].shape[1:])
+        batch_actions = self['actions'][all_idxs].reshape(batch_size, sequence_length, *self['actions'].shape[1:])
+        batch_rewards = self['rewards'][all_idxs].reshape(batch_size, sequence_length, *self['rewards'].shape[1:])
+        batch_masks = self['masks'][all_idxs].reshape(batch_size, sequence_length, *self['masks'].shape[1:])
+        batch_terminals = self['terminals'][all_idxs].reshape(batch_size, sequence_length, *self['terminals'].shape[1:])
         
-        # fill in each of the chunk_length dimensions
-        for i in range(sequence_length):
-            cur_idxs = idxs + i
-
-            if i == 0:
-                rewards[..., 0] = self['rewards'][cur_idxs]
-                masks[..., 0] = self["masks"][cur_idxs]
-                terminals[..., 0] = self["terminals"][cur_idxs]
-            else:
-                rewards[..., i] = rewards[..., i - 1] + self['rewards'][cur_idxs] * (discount ** i)
-                masks[..., i] = np.minimum(masks[..., i-1], self["masks"][cur_idxs])
-                terminals[..., i] = np.maximum(terminals[..., i-1], self["terminals"][cur_idxs])
-                valid[..., i] = (1.0 - terminals[..., i - 1])
-            
-            actions[..., i, :] = self['actions'][cur_idxs]
-            next_observations[..., i, :] = self['next_observations'][cur_idxs]
-            observations[..., i, :] = self['observations'][cur_idxs]
-            next_actions[..., i, :] = self['actions'][jnp.minimum(cur_idxs + 1, self.size - 1)]
-            
+        # Calculate next_actions
+        next_action_idxs = np.minimum(all_idxs + 1, self.size - 1)
+        batch_next_actions = self['actions'][next_action_idxs].reshape(batch_size, sequence_length, *self['actions'].shape[1:])
+        
+        # Use vectorized operations to calculate cumulative rewards and masks
+        rewards = np.zeros((batch_size, sequence_length), dtype=float)
+        masks = np.ones((batch_size, sequence_length), dtype=float)
+        terminals = np.zeros((batch_size, sequence_length), dtype=float)
+        valid = np.ones((batch_size, sequence_length), dtype=float)
+        
+        # Vectorized calculation
+        rewards[:, 0] = batch_rewards[:, 0].squeeze()
+        masks[:, 0] = batch_masks[:, 0].squeeze()
+        terminals[:, 0] = batch_terminals[:, 0].squeeze()
+        
+        discount_powers = discount ** np.arange(sequence_length)
+        for i in range(1, sequence_length):
+            rewards[:, i] = rewards[:, i-1] + batch_rewards[:, i].squeeze() * discount_powers[i]
+            masks[:, i] = np.minimum(masks[:, i-1], batch_masks[:, i].squeeze())
+            terminals[:, i] = np.maximum(terminals[:, i-1], batch_terminals[:, i].squeeze())
+            valid[:, i] = 1.0 - terminals[:, i-1]
+        
+        # Reorganize observations data format - maintain the exact same shape as the original function
+        if len(batch_observations.shape) == 5:  # Visual data: (batch, seq, h, w, c)
+            # Transpose to (batch, h, w, seq, c) format, consistent with the original function
+            observations = batch_observations.transpose(0, 2, 3, 1, 4)  # (batch_size, h, w, sequence_length, c)
+            next_observations = batch_next_observations.transpose(0, 2, 3, 1, 4)  # (batch_size, h, w, sequence_length, c)
+        else:  # State data: maintain (batch, seq, state_dim) shape
+            observations = batch_observations  # (batch_size, sequence_length, state_dim)
+            next_observations = batch_next_observations  # (batch_size, sequence_length, state_dim)
+        
+        # Maintain the 3D shape of actions and next_actions, consistent with the original function
+        actions = batch_actions  # (batch_size, sequence_length, action_dim)
+        next_actions = batch_next_actions  # (batch_size, sequence_length, action_dim)
+        
         return dict(
             observations=data['observations'].copy(),
             full_observations=observations,
