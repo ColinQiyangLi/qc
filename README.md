@@ -44,6 +44,12 @@ For Mac you have to set
 MUJOCO_GL=glfw
 ```
 
+For validating with ogbench dataset:
+
+```bash
+MUJOCO_GL=glfw uv run python main.py --run_group=reproduce --agent.actor_type=best-of-n --agent.actor_num_samples=32 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5 --ogbench_dataset_dir=[realpath/to/your/cube-quadruple-play-100m-v0/]
+```
+
 ```bash
 # QC
 MUJOCO_GL=egl python main.py --run_group=reproduce --agent.actor_type=best-of-n --agent.actor_num_samples=32 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5

@@ -5,7 +5,6 @@ from log_utils import setup_wandb, get_exp_name, get_flag_dict, CsvLogger
 
 from envs.env_utils import make_env_and_datasets
 from envs.ogbench_utils import make_ogbench_env_and_datasets
-from envs.robomimic_utils import is_robomimic_env
 
 from utils.flax_utils import save_agent
 from utils.datasets import Dataset, ReplayBuffer
@@ -119,12 +118,6 @@ def main(_):
             ds = Dataset.create(
                 **{k: v[:new_size] for k, v in ds.items()}
             )
-        
-        if is_robomimic_env(FLAGS.env_name):
-            penalty_rewards = ds["rewards"] - 1.0
-            ds_dict = {k: v for k, v in ds.items()}
-            ds_dict["rewards"] = penalty_rewards
-            ds = Dataset.create(**ds_dict)
         
         if FLAGS.sparse:
             # Create a new dataset with modified rewards instead of trying to modify the frozen one
@@ -254,9 +247,6 @@ def main(_):
             'diverse' in FLAGS.env_name or 'play' in FLAGS.env_name or 'umaze' in FLAGS.env_name
         ):
             # Adjust reward for D4RL antmaze.
-            int_reward = int_reward - 1.0
-        elif is_robomimic_env(FLAGS.env_name):
-            # Adjust online (0, 1) reward for robomimic
             int_reward = int_reward - 1.0
 
         if FLAGS.sparse:
